@@ -1,0 +1,34 @@
+name: Hourly Notion CRM Backup
+
+on:
+  schedule:
+    - cron: '0 * * * *'          # Every hour (at minute 0)
+  workflow_dispatch:                             # Allows manual run from Actions tab
+
+jobs:
+  backup-notion:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Export CRM database from Notion
+        uses: yannbolliger/notion-exporter@v0.8.1   
+        with:
+          notion_token: ${{ secrets.NOTION_TOKEN }}
+          pages: |
+             2fe86657637a80709d98e8848581f4c7     # Notion ID for the Campus International Maroc’s Hub CRM
+             2fe86657637a80cc8410f9e45f444435     # Notion ID for the Goal Tracker CRM     
+          output_dir: notion-backup
+          format: markdown,csv                 # exports pages as .md, databases as .csv
+
+      - name: Commit & push changes
+        run: |
+          git config user.name "Nihad-BIT"
+          git config user.email "nihadNV@proton.me"
+          git add notion-backup/
+          git commit -m "Hourly Notion backup $(date '+%Y-%m-%d %H:%M')"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
