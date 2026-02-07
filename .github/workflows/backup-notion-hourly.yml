@@ -22,7 +22,7 @@ jobs:
 
       - name: Backup Notion Pages & Dbs
         env:
-          NOTION_TOKEN: ${{ secrets.NOTION_INTEGRATION_TOKEN }}  # ← your secret_... token
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}  # ← your secret_... token
         run: |
           python - <<EOF
           import os
@@ -32,7 +32,7 @@ jobs:
           import markdownify
 
           notion = Client(auth=os.environ["NOTION_TOKEN"])
-          pages = ["2fe86657637a80709d98e8848581f4c7", "2fe86657637a80cc8410f9e45f444435"]
+          pages = ["2fe86657637a80709d98e8848581f4c7"]
 
           output_dir = Path("notion-backup")
           output_dir.mkdir(exist_ok=True)
