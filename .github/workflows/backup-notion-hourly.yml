@@ -1,18 +1,19 @@
 name: Notion API Backup (No Cookies)
 
 permissions:
-  contents: write
+  contents: write  # Allows the workflow to push commits
 
 on:
   schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
+    - cron: '0 * * * *'  # Every hour at :00 – change to '*/5 * * * *' for 5-min testing
+  workflow_dispatch:     # Manual trigger button in Actions tab
 
 jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -21,12 +22,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install notion-client markdownify pandas
+          pip install notion-client pandas
 
-      - name: Backup Notion Pages & Dbs
+      - name: Backup Notion Databases (CSV + Summary MD) - Debug Mode
         env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}  # ← your secret_... token
-       run: |
+          NOTION_TOKEN: ${{ secrets.NOTION_INTEGRATION_TOKEN }}  # ← CHANGE TO YOUR SECRET NAME IF DIFFERENT
+        run: |
           python - <<EOF
           import os
           from notion_client import Client
@@ -36,8 +37,8 @@ jobs:
           notion = Client(auth=os.environ["NOTION_TOKEN"])
 
           database_ids = [
-              "2fe86657637a80709d98e8848581f4c7",
-              "2fe86657637a80cc8410f9e45f444435"
+              "2fe86657637a80709d98e8848581f4c7",   # Campus International Maroc’s Hub CRM
+              "2fe86657637a80cc8410f9e45f444435"    # Goal Tracker CRM
           ]
 
           output_dir = Path("notion-backup")
@@ -52,8 +53,8 @@ jobs:
                   print(f"  Title: {title}")
                   print(f"  Properties found: {list(db['properties'].keys())}")
 
-                  # Query with page_size for debug
-                  query_result = notion.databases.query(database_id=db_id, page_size=5)  # small page for test
+                  # Query with small page_size for debug
+                  query_result = notion.databases.query(database_id=db_id, page_size=5)
                   rows = query_result["results"]
                   print(f"  Rows fetched: {len(rows)} (has_more: {query_result.get('has_more')})")
 
