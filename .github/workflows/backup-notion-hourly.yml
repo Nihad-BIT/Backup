@@ -27,30 +27,76 @@ jobs:
           python - <<EOF
           import os
           from notion_client import Client
-          import json
           from pathlib import Path
-          import markdownify
+          import pandas as pd
+          import json
 
           notion = Client(auth=os.environ["NOTION_TOKEN"])
-          pages = ["2fe86657637a80709d98e8848581f4c7"]
+
+          database_ids = [
+              "2fe86657637a80709d98e8848581f4c7",   # Campus International Maroc’s Hub CRM
+              "2fe86657637a80cc8410f9e45f444435"    # Goal Tracker CRM
+          ]
 
           output_dir = Path("notion-backup")
           output_dir.mkdir(exist_ok=True)
 
-          for page_id in pages:
-              page = notion.pages.retrieve(page_id)
-              title = page["properties"].get("title", {}).get("title", [{}])[0].get("plain_text", "Untitled")
-              children = notion.blocks.children.list(block_id=page_id).get("results", [])
+          for db_id in database_ids:
+              try:
+                  # Get database metadata (title, properties)
+                  db = notion.databases.retrieve(database_id=db_id)
+                  title = db["title"][0]["plain_text"] if db["title"] else "Untitled Database"
 
-              md_content = f"# {title}\n\n"
-              for block in children:
-                  if block["type"] == "paragraph":
-                      text = block["paragraph"]["rich_text"][0]["plain_text"] if block["paragraph"]["rich_text"] else ""
-                      md_content += text + "\n\n"
-                  # Add more block types (heading, bulleted_list_item, etc.) as needed
-                  # For databases: use notion.databases.query() and save as CSV with pandas
+                  # Query all rows (add filters/pagination if huge DB)
+                  query_result = notion.databases.query(database_id=db_id)
+                  rows = query_result["results"]
 
-              (output_dir / f"{title.replace(' ', '_')}.md").write_text(md_content)
+                  # Build simple data for CSV
+                  data = []
+                  for row in rows:
+                      props = row["properties"]
+                      row_data = {
+                          "ID": row["id"],
+                          "Created": row["created_time"],
+                          "Last Edited": row["last_edited_time"]
+                      }
+                      for prop_name, prop in props.items():
+                          if prop["type"] == "title":
+                              row_data[prop_name] = prop["title"][0]["plain_text"] if prop["title"] else ""
+                          elif prop["type"] == "rich_text":
+                              row_data[prop_name] = prop["rich_text"][0]["plain_text"] if prop["rich_text"] else ""
+                          elif prop["type"] == "select":
+                              row_data[prop_name] = prop["select"]["name"] if prop["select"] else ""
+                          elif prop["type"] == "multi_select":
+                              row_data[prop_name] = ", ".join([o["name"] for o in prop["multi_select"]]) if prop["multi_select"] else ""
+                          elif prop["type"] == "status":
+                              row_data[prop_name] = prop["status"]["name"] if prop["status"] else ""
+                          elif prop["type"] == "number":
+                              row_data[prop_name] = prop["number"]
+                          elif prop["type"] == "date":
+                              row_data[prop_name] = prop["date"]["start"] if prop["date"] else ""
+                          # Add more types as needed (checkbox, url, email, relation, etc.)
+                          else:
+                              row_data[prop_name] = str(prop.get(prop["type"], ""))
+
+                      data.append(row_data)
+
+                  if data:
+                      df = pd.DataFrame(data)
+                      csv_path = output_dir / f"{title.replace(' ', '_')}.csv"
+                      df.to_csv(csv_path, index=False)
+                      print(f"Saved CSV: {csv_path}")
+
+                  # Optional: Save basic Markdown summary
+                  md_content = f"# {title}\n\n**Database ID:** {db_id}\n**Properties:**\n"
+                  for prop_name, prop in db["properties"].items():
+                      md_content += f"- {prop_name} ({prop['type']})\n"
+                  md_path = output_dir / f"{title.replace(' ', '_')}_summary.md"
+                  md_path.write_text(md_content)
+                  print(f"Saved MD summary: {md_path}")
+
+              except Exception as e:
+                  print(f"Error processing DB {db_id}: {e}")
 
           print("Backup complete!")
           EOF
