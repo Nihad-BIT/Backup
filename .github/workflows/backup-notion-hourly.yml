@@ -2,32 +2,33 @@ name: Hourly Notion CRM Backup
 
 on:
   schedule:
-    - cron: '0/5 * * * *'          # Every hour (at minute 0)
-  workflow_dispatch:                             # Allows manual run from Actions tab
+    - cron: '0 * * * *'      # Every hour at minute 0 (:00)
+  workflow_dispatch:         # Allows manual trigger from Actions tab
 
 jobs:
   backup-notion:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Export CRM database from Notion
-        uses: AsahiMoon/notion-backup@v1.0.0   
+      - name: Export CRM from Notion
+        uses: AsahiMoon/notion-backup@v1.0.0
         with:
-          notion_token: ${{ secrets.NOTION_TOKEN }}
           pages: |
-             2fe86657637a80709d98e8848581f4c7     # Notion ID for the Campus International Maroc’s Hub CRM
-             2fe86657637a80cc8410f9e45f444435     # Notion ID for the Goal Tracker CRM     
-          output_dir: notion-backup
-          format: markdown,csv                 # exports pages as .md, databases as .csv
+            2fe86657637a80709d98e8848581f4c7   # Campus International Maroc’s Hub CRM
+            2fe86657637a80cc8410f9e45f444435   # Goal Tracker CRM
+          notion-token: ${{ secrets.NOTION_TOKEN }}          # Your token_v2 cookie
+          notion-file-token: ${{ secrets.NOTION_FILE_TOKEN }} # Your file_token cookie
+          output-dir: notion-backup                          # Folder for .md + .csv files
+          github-token: ${{ secrets.GITHUB_TOKEN }}          # Automatic – for committing
 
-      - name: Commit & push changes
+      - name: Commit & push changes (only if something changed)
         run: |
           git config user.name "Nihad-BIT"
           git config user.email "nihadNV@proton.me"
           git add notion-backup/
+          git diff --staged --quiet && exit 0 || true   # Skip commit if no changes
           git commit -m "Hourly Notion backup $(date '+%Y-%m-%d %H:%M')"
           git push
         env:
