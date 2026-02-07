@@ -26,7 +26,7 @@ jobs:
 
       - name: Backup Notion Databases (CSV + Summary MD) - Debug Mode
         env:
-          NOTION_TOKEN: ${{ secrets.NOTION_INTEGRATION_TOKEN }}  # ← CHANGE TO YOUR SECRET NAME IF DIFFERENT
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}  # ← CHANGE TO YOUR SECRET NAME IF DIFFERENT
         run: |
           python - <<EOF
           import os
