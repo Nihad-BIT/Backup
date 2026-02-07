@@ -30,7 +30,7 @@ jobs:
         run: |
           name: Backup Notion Databases (CSV + Summary MD) - Debug Mode
         
-          python - <<EOF
+          python - '<<EOF'
           import os
           from notion_client import Client
           from pathlib import Path
