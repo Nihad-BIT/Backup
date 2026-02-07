@@ -26,82 +26,81 @@ jobs:
       - name: Backup Notion Pages & Dbs
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}  # ← your secret_... token
-        run: |
+       run: |
           python - <<EOF
           import os
           from notion_client import Client
           from pathlib import Path
           import pandas as pd
-          import json
 
           notion = Client(auth=os.environ["NOTION_TOKEN"])
 
           database_ids = [
-              "2fe86657637a80709d98e8848581f4c7",   # Campus International Maroc’s Hub CRM
-              "2fe86657637a80cc8410f9e45f444435"    # Goal Tracker CRM
+              "2fe86657637a80709d98e8848581f4c7",
+              "2fe86657637a80cc8410f9e45f444435"
           ]
 
           output_dir = Path("notion-backup")
           output_dir.mkdir(exist_ok=True)
+          print(f"Output directory: {output_dir.absolute()}")
 
           for db_id in database_ids:
+              print(f"\nProcessing database: {db_id}")
               try:
-                  # Get database metadata (title, properties)
                   db = notion.databases.retrieve(database_id=db_id)
-                  title = db["title"][0]["plain_text"] if db["title"] else "Untitled Database"
+                  title = db.get("title", [{}])[0].get("plain_text", "Untitled_" + db_id[:8])
+                  print(f"  Title: {title}")
+                  print(f"  Properties found: {list(db['properties'].keys())}")
 
-                  # Query all rows (add filters/pagination if huge DB)
-                  query_result = notion.databases.query(database_id=db_id)
+                  # Query with page_size for debug
+                  query_result = notion.databases.query(database_id=db_id, page_size=5)  # small page for test
                   rows = query_result["results"]
+                  print(f"  Rows fetched: {len(rows)} (has_more: {query_result.get('has_more')})")
 
-                  # Build simple data for CSV
+                  if not rows:
+                      print("  No rows found in this database.")
+                      continue
+
                   data = []
                   for row in rows:
                       props = row["properties"]
                       row_data = {
-                          "ID": row["id"],
+                          "Page ID": row["id"],
                           "Created": row["created_time"],
-                          "Last Edited": row["last_edited_time"]
+                          "Edited": row["last_edited_time"]
                       }
-                      for prop_name, prop in props.items():
-                          if prop["type"] == "title":
-                              row_data[prop_name] = prop["title"][0]["plain_text"] if prop["title"] else ""
-                          elif prop["type"] == "rich_text":
-                              row_data[prop_name] = prop["rich_text"][0]["plain_text"] if prop["rich_text"] else ""
-                          elif prop["type"] == "select":
-                              row_data[prop_name] = prop["select"]["name"] if prop["select"] else ""
-                          elif prop["type"] == "multi_select":
-                              row_data[prop_name] = ", ".join([o["name"] for o in prop["multi_select"]]) if prop["multi_select"] else ""
-                          elif prop["type"] == "status":
-                              row_data[prop_name] = prop["status"]["name"] if prop["status"] else ""
-                          elif prop["type"] == "number":
-                              row_data[prop_name] = prop["number"]
-                          elif prop["type"] == "date":
-                              row_data[prop_name] = prop["date"]["start"] if prop["date"] else ""
-                          # Add more types as needed (checkbox, url, email, relation, etc.)
-                          else:
-                              row_data[prop_name] = str(prop.get(prop["type"], ""))
+                      for name, prop in props.items():
+                          val = prop.get(prop["type"])
+                          if isinstance(val, dict):
+                              if "name" in val:
+                                  val = val["name"]
+                              elif "plain_text" in val:
+                                  val = val["plain_text"]
+                              elif "start" in val:
+                                  val = val["start"]
+                          row_data[name] = val if val is not None else ""
 
                       data.append(row_data)
 
                   if data:
                       df = pd.DataFrame(data)
-                      csv_path = output_dir / f"{title.replace(' ', '_')}.csv"
+                      safe_title = "".join(c if c.isalnum() or c in " -" else "_" for c in title).strip("_")
+                      csv_path = output_dir / f"{safe_title}.csv"
                       df.to_csv(csv_path, index=False)
-                      print(f"Saved CSV: {csv_path}")
+                      print(f"  Saved CSV with {len(data)} rows: {csv_path.name}")
 
-                  # Optional: Save basic Markdown summary
-                  md_content = f"# {title}\n\n**Database ID:** {db_id}\n**Properties:**\n"
-                  for prop_name, prop in db["properties"].items():
-                      md_content += f"- {prop_name} ({prop['type']})\n"
-                  md_path = output_dir / f"{title.replace(' ', '_')}_summary.md"
-                  md_path.write_text(md_content)
-                  print(f"Saved MD summary: {md_path}")
+                      # Summary MD
+                      md_content = f"# {title}\n\n**ID:** {db_id}\n**Rows:** {len(rows)}\n**Properties:**\n"
+                      for p in db["properties"]:
+                          md_content += f"- {p}\n"
+                      md_path = output_dir / f"{safe_title}_summary.md"
+                      md_path.write_text(md_content)
+                      print(f"  Saved summary: {md_path.name}")
 
               except Exception as e:
-                  print(f"Error processing DB {db_id}: {e}")
+                  print(f"  ERROR on {db_id}: {str(e)}")
 
-          print("Backup complete!")
+          print("\nBackup script finished.")
           EOF
 
       - name: Commit changes
