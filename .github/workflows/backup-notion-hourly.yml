@@ -28,25 +28,19 @@ jobs:
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}  # ← CHANGE TO YOUR SECRET NAME IF DIFFERENT
         run: |
+          name: Backup Notion Databases (CSV + Summary MD) - Debug Mode
+        
           python - <<EOF
           import os
           from notion_client import Client
           from pathlib import Path
-          import pandas as pd
+          import json
 
           notion = Client(auth=os.environ["NOTION_TOKEN"])
 
-        
-          try:
-              me = notion.users.me()
-              print("Authenticated as:", me["name"])
-          except Exception as e:
-              print("AUTH FAILED:", e)
-              raise
-
           database_ids = [
-              "2fe86657637a80709d98e8848581f4c7",   # Campus International Maroc’s Hub CRM
-              "2fe86657637a80cc8410f9e45f444435"    # Goal Tracker CRM
+              "2fe86657637a80709d98e8848581f4c7",
+              "2fe86657637a80cc8410f9e45f444435"
           ]
 
           output_dir = Path("notion-backup")
@@ -57,22 +51,32 @@ jobs:
               print(f"\nProcessing database: {db_id}")
               try:
                   db = notion.databases.retrieve(database_id=db_id)
-                  title = db.get("title", [{}])[0].get("plain_text", "Untitled_" + db_id[:8])
-                  print(f"  Title: {title}")
-                  print(f"  Properties found: {list(db['properties'].keys())}")
+                  print(f"  Raw DB keys: {list(db.keys())}")
+                  print(f"  Full DB response (truncated): {json.dumps(db, indent=2)[:1500]}...")
 
-                  # Query with small page_size for debug
+                  title = (db.get("title") or [{}])[0].get("plain_text", "Untitled_" + db_id[:8])
+                  print(f"  Title: {title}")
+
+                  properties = db.get("properties", {})
+                  print(f"  Properties found: {list(properties.keys())}")
+
+                  if not properties:
+                      print("  WARNING: No properties returned — likely permissions issue!")
+                      continue
+
+                  # Query rows
                   query_result = notion.databases.query(database_id=db_id, page_size=5)
                   rows = query_result["results"]
                   print(f"  Rows fetched: {len(rows)} (has_more: {query_result.get('has_more')})")
 
                   if not rows:
-                      print("  No rows found in this database.")
+                      print("  No rows found — database might be empty or filtered.")
                       continue
 
+                  # Simple row extraction
                   data = []
                   for row in rows:
-                      props = row["properties"]
+                      props = row.get("properties", {})
                       row_data = {
                           "Page ID": row["id"],
                           "Created": row["created_time"],
@@ -81,26 +85,23 @@ jobs:
                       for name, prop in props.items():
                           val = prop.get(prop["type"])
                           if isinstance(val, dict):
-                              if "name" in val:
-                                  val = val["name"]
-                              elif "plain_text" in val:
-                                  val = val["plain_text"]
-                              elif "start" in val:
-                                  val = val["start"]
+                              if "name" in val: val = val["name"]
+                              elif "plain_text" in val: val = val["plain_text"]
+                              elif "start" in val: val = val["start"]
                           row_data[name] = val if val is not None else ""
-
                       data.append(row_data)
 
                   if data:
-                      df = pd.DataFrame(data)
                       safe_title = "".join(c if c.isalnum() or c in " -" else "_" for c in title).strip("_")
                       csv_path = output_dir / f"{safe_title}.csv"
+                      import pandas as pd
+                      df = pd.DataFrame(data)
                       df.to_csv(csv_path, index=False)
                       print(f"  Saved CSV with {len(data)} rows: {csv_path.name}")
 
                       # Summary MD
-                      md_content = f"# {title}\n\n**ID:** {db_id}\n**Rows:** {len(rows)}\n**Properties:**\n"
-                      for p in db["properties"]:
+                      md_content = f"# {title}\n\n**ID:** {db_id}\n**Rows sampled:** {len(rows)}\n**Properties:**\n"
+                      for p in properties:
                           md_content += f"- {p}\n"
                       md_path = output_dir / f"{safe_title}_summary.md"
                       md_path.write_text(md_content)
