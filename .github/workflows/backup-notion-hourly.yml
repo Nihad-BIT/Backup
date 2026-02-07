@@ -36,12 +36,13 @@ jobs:
 
           notion = Client(auth=os.environ["NOTION_TOKEN"])
 
+        
           try:
-          me = notion.users.me()
-          print("Authenticated as:", me["name"])
+              me = notion.users.me()
+              print("Authenticated as:", me["name"])
           except Exception as e:
-          print("AUTH FAILED:", e)
-          raise
+              print("AUTH FAILED:", e)
+              raise
 
           database_ids = [
               "2fe86657637a80709d98e8848581f4c7",   # Campus International Maroc’s Hub CRM
