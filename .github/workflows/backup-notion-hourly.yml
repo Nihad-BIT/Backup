@@ -28,8 +28,6 @@ jobs:
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}  # ← CHANGE TO YOUR SECRET NAME IF DIFFERENT
         run: |
-          name: Backup Notion Databases (CSV + Summary MD) - Debug Mode
-        
           python - <<'EOF'
           import os
           from notion_client import Client
