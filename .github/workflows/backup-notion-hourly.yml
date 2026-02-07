@@ -17,7 +17,7 @@ jobs:
         with:
           pages: |
             2fe86657637a80709d98e8848581f4c7   # Campus International Maroc’s Hub CRM
-            2fe86657637a80cc8410f9e45f444435   # Goal Tracker CRM
+    
           notion-token: ${{ secrets.NOTION_TOKEN }}          # Your token_v2 cookie
           notion-file-token: ${{ secrets.NOTION_FILE_TOKEN }} # Your file_token cookie
           output-dir: notion-backup                          # Folder for .md + .csv files
