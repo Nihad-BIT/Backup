@@ -1,35 +1,66 @@
-name: Hourly Notion CRM Backup
+name: Notion API Backup (No Cookies)
 
 on:
   schedule:
-    - cron: '0 * * * *'      # Every hour at minute 0 (:00)
-  workflow_dispatch:         # Allows manual trigger from Actions tab
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
-  backup-notion:
+  backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Export CRM from Notion
-        uses: AsahiMoon/notion-backup@v1.0.0
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          pages: |
-            2fe86657637a80709d98e8848581f4c7   # Campus International Maroc’s Hub CRM
-    
-          notion-token: ${{ secrets.NOTION_TOKEN }}          # Your token_v2 cookie
-          notion-file-token: ${{ secrets.NOTION_FILE_TOKEN }} # Your file_token cookie
-          output-dir: notion-backup                          # Folder for .md + .csv files
-          github-token: ${{ secrets.GITHUB_TOKEN }}          # Automatic – for committing
+          python-version: '3.12'
 
-      - name: Commit & push changes (only if something changed)
+      - name: Install dependencies
+        run: |
+          pip install notion-client markdownify pandas
+
+      - name: Backup Notion Pages & Dbs
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_INTEGRATION_TOKEN }}  # ← your secret_... token
+        run: |
+          python - <<EOF
+          import os
+          from notion_client import Client
+          import json
+          from pathlib import Path
+          import markdownify
+
+          notion = Client(auth=os.environ["NOTION_TOKEN"])
+          pages = ["2fe86657637a80709d98e8848581f4c7", "2fe86657637a80cc8410f9e45f444435"]
+
+          output_dir = Path("notion-backup")
+          output_dir.mkdir(exist_ok=True)
+
+          for page_id in pages:
+              page = notion.pages.retrieve(page_id)
+              title = page["properties"].get("title", {}).get("title", [{}])[0].get("plain_text", "Untitled")
+              children = notion.blocks.children.list(block_id=page_id).get("results", [])
+
+              md_content = f"# {title}\n\n"
+              for block in children:
+                  if block["type"] == "paragraph":
+                      text = block["paragraph"]["rich_text"][0]["plain_text"] if block["paragraph"]["rich_text"] else ""
+                      md_content += text + "\n\n"
+                  # Add more block types (heading, bulleted_list_item, etc.) as needed
+                  # For databases: use notion.databases.query() and save as CSV with pandas
+
+              (output_dir / f"{title.replace(' ', '_')}.md").write_text(md_content)
+
+          print("Backup complete!")
+          EOF
+
+      - name: Commit changes
         run: |
           git config user.name "Nihad-BIT"
           git config user.email "nihadNV@proton.me"
           git add notion-backup/
-          git diff --staged --quiet && exit 0 || true   # Skip commit if no changes
-          git commit -m "Hourly Notion backup $(date '+%Y-%m-%d %H:%M')"
+          git diff --staged --quiet || git commit -m "API Notion backup $(date '+%Y-%m-%d %H:%M')"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
