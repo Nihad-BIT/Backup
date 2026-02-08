@@ -1,12 +1,12 @@
-name: Notion API Backup (No Cookies)
+name: Notion API Backup (Auto-Discovery)
 
 permissions:
-  contents: write  # Allows the workflow to push commits
+  contents: write
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour at :00 – change to '*/5 * * * *' for 5-min testing
-  workflow_dispatch:     # Manual trigger button in Actions tab
+    - cron: '0 * * * *'  # Every hour
+  workflow_dispatch:      # Manual trigger
 
 jobs:
   backup:
@@ -24,99 +24,134 @@ jobs:
         run: |
           pip install notion-client pandas
 
-      - name: Backup Notion Databases (CSV + Summary MD) - Debug Mode
+      - name: Backup All Accessible Notion Databases
         env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}  # ← CHANGE TO YOUR SECRET NAME IF DIFFERENT
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         run: |
           python - <<'EOF'
           import os
           from notion_client import Client
           from pathlib import Path
           import json
+          import pandas as pd
 
+          # Initialize Client
           notion = Client(auth=os.environ["NOTION_TOKEN"])
 
-          database_ids = [
-              "2fe86657637a805faab9000b4f8015b6",
-              "2fe86657637a80c4957e000b695c0b7b"
-          ]
-
+          # Setup Output Directory
           output_dir = Path("notion-backup")
           output_dir.mkdir(exist_ok=True)
-          print(f"Output directory: {output_dir.absolute()}")
 
-          for db_id in database_ids:
-              print(f"\nProcessing database: {db_id}")
+          print("--- Starting Auto-Discovery Backup ---")
+
+          # 1. SEARCH for all databases the integration can see
+          try:
+              search_results = notion.search(filter={"property": "object", "value": "database"}).get("results", [])
+          except Exception as e:
+              print(f"CRITICAL ERROR during search: {e}")
+              exit(1)
+
+          if not search_results:
+              print("No databases found! Make sure you have invited the bot to the pages in Notion.")
+          else:
+              print(f"Found {len(search_results)} databases.\n")
+
+          for db in search_results:
+              db_id = db["id"]
+              title_list = db.get("title", [])
+              title = title_list[0].get("plain_text", f"Untitled_{db_id[:8]}") if title_list else f"Untitled_{db_id[:8]}"
+              
+              print(f"Processing: {title} ({db_id})")
+              
+              # Check for properties (the schema)
+              properties = db.get("properties", {})
+              if not properties:
+                  print(f"  [!] Skipping: No properties visible. Check 'Connect to' in Notion.")
+                  continue
+
+              # 2. QUERY all rows (handling pagination)
+              all_rows = []
+              has_more = True
+              next_cursor = None
+              
               try:
-                  db = notion.databases.retrieve(database_id=db_id)
-                  print(f"  Raw DB keys: {list(db.keys())}")
-                  print(f"  Full DB response (truncated): {json.dumps(db, indent=2)[:1500]}...")
-
-                  title = (db.get("title") or [{}])[0].get("plain_text", "Untitled_" + db_id[:8])
-                  print(f"  Title: {title}")
-
-                  properties = db.get("properties", {})
-                  print(f"  Properties found: {list(properties.keys())}")
-
-                  if not properties:
-                      print("  WARNING: No properties returned — likely permissions issue!")
-                      continue
-
-                  # Query rows
-                  query_result = notion.databases.query(database_id=db_id, page_size=5)
-                  rows = query_result["results"]
-                  print(f"  Rows fetched: {len(rows)} (has_more: {query_result.get('has_more')})")
-
-                  if not rows:
-                      print("  No rows found — database might be empty or filtered.")
-                      continue
-
-                  # Simple row extraction
-                  data = []
-                  for row in rows:
-                      props = row.get("properties", {})
-                      row_data = {
-                          "Page ID": row["id"],
-                          "Created": row["created_time"],
-                          "Edited": row["last_edited_time"]
-                      }
-                      for name, prop in props.items():
-                          val = prop.get(prop["type"])
-                          if isinstance(val, dict):
-                              if "name" in val: val = val["name"]
-                              elif "plain_text" in val: val = val["plain_text"]
-                              elif "start" in val: val = val["start"]
-                          row_data[name] = val if val is not None else ""
-                      data.append(row_data)
-
-                  if data:
-                      safe_title = "".join(c if c.isalnum() or c in " -" else "_" for c in title).strip("_")
-                      csv_path = output_dir / f"{safe_title}.csv"
-                      import pandas as pd
-                      df = pd.DataFrame(data)
-                      df.to_csv(csv_path, index=False)
-                      print(f"  Saved CSV with {len(data)} rows: {csv_path.name}")
-
-                      # Summary MD
-                      md_content = f"# {title}\n\n**ID:** {db_id}\n**Rows sampled:** {len(rows)}\n**Properties:**\n"
-                      for p in properties:
-                          md_content += f"- {p}\n"
-                      md_path = output_dir / f"{safe_title}_summary.md"
-                      md_path.write_text(md_content)
-                      print(f"  Saved summary: {md_path.name}")
-
+                  while has_more:
+                      query_result = notion.databases.query(
+                          database_id=db_id, 
+                          start_cursor=next_cursor,
+                          page_size=100
+                      )
+                      all_rows.extend(query_result["results"])
+                      has_more = query_result["has_more"]
+                      next_cursor = query_result["next_cursor"]
+                  
+                  print(f"  Rows found: {len(all_rows)}")
               except Exception as e:
-                  print(f"  ERROR on {db_id}: {str(e)}")
+                  print(f"  [!] Error querying rows: {e}")
+                  continue
 
-          print("\nBackup script finished.")
+              # 3. EXTRACT DATA logic
+              data = []
+              for row in all_rows:
+                  props = row.get("properties", {})
+                  row_data = {
+                      "Page ID": row["id"],
+                      "URL": row.get("url"),
+                      "Created": row["created_time"],
+                      "Edited": row["last_edited_time"]
+                  }
+                  
+                  for prop_name, prop_content in props.items():
+                      p_type = prop_content.get("type")
+                      val_obj = prop_content.get(p_type)
+                      
+                      # Parsing different Notion types into strings
+                      if p_type in ["title", "rich_text"]:
+                          parsed_val = "".join([t.get("plain_text", "") for t in val_obj]) if val_obj else ""
+                      elif p_type == "select" and val_obj:
+                          parsed_val = val_obj.get("name", "")
+                      elif p_type == "multi_select" and val_obj:
+                          parsed_val = ", ".join([v.get("name", "") for v in val_obj])
+                      elif p_type == "date" and val_obj:
+                          parsed_val = val_obj.get("start", "")
+                      elif p_type == "number":
+                          parsed_val = val_obj
+                      elif p_type == "checkbox":
+                          parsed_val = val_obj
+                      elif p_type == "url":
+                          parsed_val = val_obj
+                      elif p_type == "email":
+                          parsed_val = val_obj
+                      elif p_type == "phone_number":
+                          parsed_val = val_obj
+                      else:
+                          parsed_val = str(val_obj) if val_obj else ""
+                      
+                      row_data[prop_name] = parsed_val
+                  
+                  data.append(row_data)
+
+              # 4. SAVE TO CSV
+              if data:
+                  # Sanitize filename
+                  safe_title = "".join(c if c.isalnum() or c in " -" else "_" for c in title).strip()
+                  csv_path = output_dir / f"{safe_title}.csv"
+                  
+                  df = pd.DataFrame(data)
+                  df.to_csv(csv_path, index=False)
+                  print(f"  [SUCCESS] Saved to: {csv_path.name}")
+              else:
+                  print(f"  [?] Database is empty.")
+
+          print("\n--- Backup script finished ---")
           EOF
 
-      - name: Commit changes
+      - name: Commit and push changes
         run: |
           git config user.name "Nihad-BIT"
           git config user.email "nihadNV@proton.me"
           git add notion-backup/
-          git diff --staged --quiet || git commit -m "API Notion backup $(date '+%Y-%m-%d %H:%M')"
-          git push
+          # Only commit if there are changes
+          git diff --staged --quiet || (git commit -m "Auto-backup Notion: $(date '+%Y-%m-%d %H:%M')" && git push)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
