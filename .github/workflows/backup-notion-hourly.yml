@@ -45,7 +45,9 @@ jobs:
 
           ROOT_IDS = [
               "2fe86657637a80709d98e8848581f4c7", # CRM Hub
-              "2fe86657637a80cc8410f9e45f444435"  # Goals Tracker
+              "2fe86657637a80cc8410f9e45f444435",  # Goals Tracker
+              "26ef71dcda404662b9c4e34698547e91", # Tasks
+              "4df80654477e4070875b7298c76b5487"  # checking a doc that contain only text if it can be pushed
           ]
 
           def extract_properties(row):
