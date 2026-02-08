@@ -44,19 +44,21 @@ jobs:
 
           print("--- Starting Auto-Discovery Backup ---")
 
-          # 1. SEARCH for all databases the integration can see
+          # 1. SEARCH for all accessible objects (No filter to avoid API validation errors)
           try:
-              search_results = notion.search(filter={"property": "object", "value": "database"}).get("results", [])
+              search_results = notion.search().get("results", [])
+              # Manually filter for databases only
+              databases = [obj for obj in search_results if obj.get("object") == "database"]
           except Exception as e:
               print(f"CRITICAL ERROR during search: {e}")
               exit(1)
 
-          if not search_results:
-              print("No databases found! Make sure you have invited the bot to the pages in Notion.")
+          if not databases:
+              print("No databases found! Make sure you have 'invited' the bot to your pages in Notion.")
           else:
-              print(f"Found {len(search_results)} databases.\n")
+              print(f"Found {len(databases)} databases.\n")
 
-          for db in search_results:
+          for db in databases:
               db_id = db["id"]
               title_list = db.get("title", [])
               title = title_list[0].get("plain_text", f"Untitled_{db_id[:8]}") if title_list else f"Untitled_{db_id[:8]}"
@@ -125,7 +127,7 @@ jobs:
                       elif p_type == "phone_number":
                           parsed_val = val_obj
                       else:
-                          parsed_val = str(val_obj) if val_obj else ""
+                          parsed_val = "" # Skip complex types for basic CSV
                       
                       row_data[prop_name] = parsed_val
                   
