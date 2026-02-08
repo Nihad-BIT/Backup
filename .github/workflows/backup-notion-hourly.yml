@@ -1,4 +1,4 @@
-name: Notion API Backup (Deep Scan)
+name: Notion API Backup (Recursive Crawler)
 
 permissions:
   contents: write
@@ -52,47 +52,64 @@ jobs:
                       row_data[name] = ", ".join([v.get("name", "") for v in val])
                   elif p_type == "date" and val:
                       row_data[name] = val.get("start", "")
+                  elif p_type == "number":
+                      row_data[name] = val
                   else:
                       row_data[name] = str(val) if val is not None else ""
               return row_data
 
           def backup_database(db_id, title):
-              print(f"  -> Extracting Database: {title}")
+              print(f"  [Found Database] Extracting: {title} ({db_id})")
               all_rows = []
               has_more, cursor = True, None
-              while has_more:
-                  res = notion.databases.query(database_id=db_id, start_cursor=cursor)
-                  all_rows.extend(res["results"])
-                  has_more, cursor = res["has_more"], res["next_cursor"]
-              
-              if all_rows:
-                  df = pd.DataFrame([extract_properties(r) for r in all_rows])
-                  safe_title = "".join(c if c.isalnum() or c in " -" else "_" for c in title).strip()
-                  df.to_csv(output_dir / f"{safe_title}.csv", index=False)
-                  print(f"  [SUCCESS] Saved {len(all_rows)} rows.")
+              try:
+                  while has_more:
+                      res = notion.databases.query(database_id=db_id, start_cursor=cursor)
+                      all_rows.extend(res["results"])
+                      has_more, cursor = res["has_more"], res["next_cursor"]
+                  
+                  if all_rows:
+                      df = pd.DataFrame([extract_properties(r) for r in all_rows])
+                      safe_title = "".join(c if c.isalnum() or c in " -" else "_" for c in title).strip()
+                      df.to_csv(output_dir / f"{safe_title}.csv", index=False)
+                      print(f"    -> SUCCESS: Saved {len(all_rows)} rows.")
+              except Exception as e:
+                  print(f"    -> ERROR: Could not query database {db_id}: {e}")
 
-          print("--- Starting Deep Scan Backup ---")
+          def scan_block(block_id):
+              """Recursively search for child_database blocks"""
+              try:
+                  children = notion.blocks.children.list(block_id=block_id).get("results", [])
+                  for child in children:
+                      c_type = child["type"]
+                      
+                      # If it's a database, back it up
+                      if c_type == "child_database":
+                          db_title = child["child_database"]["title"]
+                          backup_database(child["id"], db_title)
+                      
+                      # If it's a page or a toggle/column, look inside it
+                      if child.get("has_children"):
+                          scan_block(child["id"])
+              except Exception as e:
+                  pass
+
+          print("--- Starting Recursive Crawler Backup ---")
+          
+          # First, try a standard search
+          print("Checking direct database access...")
           search_results = notion.search().get("results", [])
-
+          
+          if not search_results:
+              print("No direct access found via search. Switching to deep-scan...")
+          
           for item in search_results:
-              item_id = item["id"]
-              item_obj = item.get("object")
-              
-              # Get Title
-              title = "Untitled"
-              if item_obj == "database":
-                  title = item["title"][0]["plain_text"] if item["title"] else "Database"
-                  backup_database(item_id, title)
+              if item["object"] == "database":
+                  title = item["title"][0]["plain_text"] if item["title"] else "Untitled"
+                  backup_database(item["id"], title)
               else:
-                  # If it's a page or data_source, look for databases INSIDE it
-                  try:
-                      children = notion.blocks.children.list(block_id=item_id).get("results", [])
-                      for child in children:
-                          if child["type"] == "child_database":
-                              db_title = child["child_database"]["title"]
-                              backup_database(child["id"], db_title)
-                  except Exception:
-                      continue
+                  # Crawl pages found in search
+                  scan_block(item["id"])
 
           print("\n--- Backup script finished ---")
           EOF
