@@ -34,11 +34,12 @@ jobs:
           from pathlib import Path
           import pandas as pd
 
+          # Initialize Client
           notion = Client(auth=os.environ["NOTION_TOKEN"])
           output_dir = Path("notion-backup")
           output_dir.mkdir(exist_ok=True)
 
-          # These are your specific CRM and Tracker IDs
+          # Your specific CRM and Tracker IDs
           ROOT_IDS = [
               "2fe86657637a80709d98e8848581f4c7",  # Campus International Maroc’s Hub CRM
               "2fe86657637a80cc8410f9e45f444435"   # Goal Tracker CRM
@@ -71,18 +72,26 @@ jobs:
               has_more, cursor = True, None
               try:
                   while has_more:
-                      res = notion.databases.query(database_id=db_id, start_cursor=cursor)
+                      # CORRECTED SYNTAX: notion.databases.query(...)
+                      res = notion.databases.query(
+                          **{
+                              "database_id": db_id,
+                              "start_cursor": cursor,
+                          }
+                      )
                       all_rows.extend(res["results"])
                       has_more, cursor = res["has_more"], res["next_cursor"]
                   
                   if all_rows:
                       df = pd.DataFrame([extract_properties(r) for r in all_rows])
-                      # Clean filename
                       safe_title = "".join(c if c.isalnum() or c in " -" else "_" for c in title).strip()
-                      df.to_csv(output_dir / f"{safe_title}.csv", index=False)
-                      print(f"      -> SUCCESS: Saved {len(all_rows)} rows to CSV.")
+                      csv_path = output_dir / f"{safe_title}.csv"
+                      df.to_csv(csv_path, index=False)
+                      print(f"      -> SUCCESS: Saved {len(all_rows)} rows to {csv_path.name}")
+                  else:
+                      print("      -> Database is empty, skipping CSV creation.")
               except Exception as e:
-                  print(f"      -> Skip: Could not query as database ({e})")
+                  print(f"      -> Skip: API Error ({e})")
 
           def scan_block(block_id):
               """Recursive crawl to find 'child_database' blocks"""
@@ -92,7 +101,7 @@ jobs:
                       db_info = notion.databases.retrieve(database_id=block_id)
                       db_title = db_info["title"][0]["plain_text"] if db_info["title"] else "Database"
                       backup_database(block_id, db_title)
-                      return # If it's a DB, we don't need to scan its children for more DBs usually
+                      return 
                   except:
                       pass
 
