@@ -44,19 +44,28 @@ jobs:
 
           print("--- Starting Auto-Discovery Backup ---")
 
-          # 1. SEARCH for all accessible objects (No filter to avoid API validation errors)
+          # 1. SEARCH for all accessible objects
           try:
-              search_results = notion.search().get("results", [])
+              # We fetch everything the bot can see to debug permissions
+              response = notion.search().get("results", [])
+              
+              # Debug: What did the bot actually see?
+              if response:
+                  print(f"DEBUG: Bot can see {len(response)} total items.")
+                  for item in response:
+                      print(f"  - Found {item.get('object')}: {item.get('id')}")
+              
               # Manually filter for databases only
-              databases = [obj for obj in search_results if obj.get("object") == "database"]
+              databases = [obj for obj in response if obj.get("object") == "database"]
           except Exception as e:
               print(f"CRITICAL ERROR during search: {e}")
               exit(1)
 
           if not databases:
-              print("No databases found! Make sure you have 'invited' the bot to your pages in Notion.")
+              print("\n[!] No databases found!")
+              print("ACTION REQUIRED: Go to your Notion Database -> 3 Dots -> Add Connection -> Search for your bot.")
           else:
-              print(f"Found {len(databases)} databases.\n")
+              print(f"\nFound {len(databases)} databases. Starting extraction...\n")
 
           for db in databases:
               db_id = db["id"]
@@ -65,13 +74,12 @@ jobs:
               
               print(f"Processing: {title} ({db_id})")
               
-              # Check for properties (the schema)
               properties = db.get("properties", {})
               if not properties:
-                  print(f"  [!] Skipping: No properties visible. Check 'Connect to' in Notion.")
+                  print(f"  [!] Skipping: No properties visible.")
                   continue
 
-              # 2. QUERY all rows (handling pagination)
+              # 2. QUERY all rows
               all_rows = []
               has_more = True
               next_cursor = None
@@ -107,7 +115,6 @@ jobs:
                       p_type = prop_content.get("type")
                       val_obj = prop_content.get(p_type)
                       
-                      # Parsing different Notion types into strings
                       if p_type in ["title", "rich_text"]:
                           parsed_val = "".join([t.get("plain_text", "") for t in val_obj]) if val_obj else ""
                       elif p_type == "select" and val_obj:
@@ -127,7 +134,7 @@ jobs:
                       elif p_type == "phone_number":
                           parsed_val = val_obj
                       else:
-                          parsed_val = "" # Skip complex types for basic CSV
+                          parsed_val = "" 
                       
                       row_data[prop_name] = parsed_val
                   
@@ -135,7 +142,6 @@ jobs:
 
               # 4. SAVE TO CSV
               if data:
-                  # Sanitize filename
                   safe_title = "".join(c if c.isalnum() or c in " -" else "_" for c in title).strip()
                   csv_path = output_dir / f"{safe_title}.csv"
                   
@@ -153,7 +159,6 @@ jobs:
           git config user.name "Nihad-BIT"
           git config user.email "nihadNV@proton.me"
           git add notion-backup/
-          # Only commit if there are changes
           git diff --staged --quiet || (git commit -m "Auto-backup Notion: $(date '+%Y-%m-%d %H:%M')" && git push)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
