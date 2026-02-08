@@ -37,8 +37,8 @@ jobs:
           notion = Client(auth=os.environ["NOTION_TOKEN"])
 
           database_ids = [
-              "2fe86657637a80709d98e8848581f4c7",
-              "2fe86657637a80cc8410f9e45f444435"
+              "2fe86657637a805faab9000b4f8015b6",
+              "2fe86657637a80c4957e000b695c0b7b"
           ]
 
           output_dir = Path("notion-backup")
