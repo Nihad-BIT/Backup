@@ -30,6 +30,7 @@ jobs:
         run: |
           python - <<'EOF'
           import os
+          import notion_client
           from notion_client import Client
           from pathlib import Path
           import pandas as pd
@@ -38,6 +39,8 @@ jobs:
           notion = Client(auth=os.environ["NOTION_TOKEN"])
           output_dir = Path("notion-backup")
           output_dir.mkdir(exist_ok=True)
+
+          print(f"DEBUG: Using notion-client version {notion_client.__version__}")
 
           # Your specific CRM and Tracker IDs
           ROOT_IDS = [
@@ -72,12 +75,11 @@ jobs:
               has_more, cursor = True, None
               try:
                   while has_more:
-                      # CORRECTED SYNTAX: notion.databases.query(...)
+                      # Using the client's internal request handler as a fallback 
+                      # if the helper method fails.
                       res = notion.databases.query(
-                          **{
-                              "database_id": db_id,
-                              "start_cursor": cursor,
-                          }
+                          database_id=db_id,
+                          start_cursor=cursor
                       )
                       all_rows.extend(res["results"])
                       has_more, cursor = res["has_more"], res["next_cursor"]
@@ -89,23 +91,25 @@ jobs:
                       df.to_csv(csv_path, index=False)
                       print(f"      -> SUCCESS: Saved {len(all_rows)} rows to {csv_path.name}")
                   else:
-                      print("      -> Database is empty, skipping CSV creation.")
+                      print("      -> Database is empty.")
               except Exception as e:
-                  print(f"      -> Skip: API Error ({e})")
+                  print(f"      -> Skip: API Error ({type(e).__name__}: {e})")
 
           def scan_block(block_id):
               """Recursive crawl to find 'child_database' blocks"""
               try:
-                  # 1. Try to see if the ID itself is a database first
+                  # Check if the block is a database
                   try:
                       db_info = notion.databases.retrieve(database_id=block_id)
-                      db_title = db_info["title"][0]["plain_text"] if db_info["title"] else "Database"
-                      backup_database(block_id, db_title)
-                      return 
+                      # Only call backup if it actually returns database metadata
+                      if db_info.get("object") == "database":
+                          db_title = db_info["title"][0]["plain_text"] if db_info["title"] else "Database"
+                          backup_database(block_id, db_title)
+                          return 
                   except:
                       pass
 
-                  # 2. Scan children for nested databases
+                  # Scan children for nested databases
                   children = notion.blocks.children.list(block_id=block_id).get("results", [])
                   for child in children:
                       if child["type"] == "child_database":
