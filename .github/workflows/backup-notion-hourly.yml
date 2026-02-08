@@ -1,12 +1,12 @@
-name: Notion API Backup (Auto-Discovery)
+name: Notion API Backup (Deep Scan)
 
 permissions:
   contents: write
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour
-  workflow_dispatch:      # Manual trigger
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   backup:
@@ -24,7 +24,7 @@ jobs:
         run: |
           pip install notion-client pandas
 
-      - name: Backup All Accessible Notion Databases
+      - name: Backup Notion Data
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         run: |
@@ -32,116 +32,67 @@ jobs:
           import os
           from notion_client import Client
           from pathlib import Path
-          import json
           import pandas as pd
 
-          # Initialize Client
           notion = Client(auth=os.environ["NOTION_TOKEN"])
-
-          # Setup Output Directory
           output_dir = Path("notion-backup")
           output_dir.mkdir(exist_ok=True)
 
-          print("--- Starting Auto-Discovery Backup ---")
+          def extract_properties(row):
+              props = row.get("properties", {})
+              row_data = {"Page ID": row["id"], "URL": row.get("url")}
+              for name, content in props.items():
+                  p_type = content.get("type")
+                  val = content.get(p_type)
+                  if p_type in ["title", "rich_text"]:
+                      row_data[name] = "".join([t.get("plain_text", "") for t in val]) if val else ""
+                  elif p_type == "select" and val:
+                      row_data[name] = val.get("name", "")
+                  elif p_type == "multi_select" and val:
+                      row_data[name] = ", ".join([v.get("name", "") for v in val])
+                  elif p_type == "date" and val:
+                      row_data[name] = val.get("start", "")
+                  else:
+                      row_data[name] = str(val) if val is not None else ""
+              return row_data
 
-          # 1. SEARCH
-          try:
-              response = notion.search().get("results", [])
-              
-              # We now include 'database', 'data_source', and 'page' 
-              # because your workspace uses the newer 'data_source' type.
-              targets = [obj for obj in response if obj.get("object") in ["database", "data_source", "page"]]
-          except Exception as e:
-              print(f"CRITICAL ERROR during search: {e}")
-              exit(1)
-
-          if not targets:
-              print("\n[!] No valid targets found!")
-          else:
-              print(f"\nFound {len(targets)} potential targets. Starting extraction...\n")
-
-          for db in targets:
-              db_id = db["id"]
-              obj_type = db.get("object")
-              
-              # Extract Title
-              title = "Untitled"
-              if "title" in db and isinstance(db["title"], list) and len(db["title"]) > 0:
-                  title = db["title"][0].get("plain_text", title)
-              elif "properties" in db:
-                  # Pages store their title inside properties
-                  for prop in db["properties"].values():
-                      if prop.get("type") == "title":
-                          title = "".join([t.get("plain_text", "") for t in prop.get("title", [])])
-              
-              if not title or title == "Untitled":
-                  title = f"{obj_type}_{db_id[:8]}"
-
-              print(f"Processing {obj_type}: {title} ({db_id})")
-              
-              # 2. QUERY 
+          def backup_database(db_id, title):
+              print(f"  -> Extracting Database: {title}")
               all_rows = []
-              try:
-                  # If it's a page, we treat it as a single-row entry or check if it's actually a database
-                  # Notion API often allows querying 'page' objects if they act as databases
-                  has_more = True
-                  next_cursor = None
-                  
-                  while has_more:
-                      query_result = notion.databases.query(
-                          database_id=db_id, 
-                          start_cursor=next_cursor,
-                          page_size=100
-                      )
-                      all_rows.extend(query_result["results"])
-                      has_more = query_result["has_more"]
-                      next_cursor = query_result["next_cursor"]
-                  
-                  print(f"  Rows found: {len(all_rows)}")
-              except Exception as e:
-                  # If querying fails, it's likely a standard page, not a database/source.
-                  print(f"  [Skip] Object is likely a standard page, not a collection.")
-                  continue
-
-              # 3. EXTRACT DATA logic
-              data = []
-              for row in all_rows:
-                  props = row.get("properties", {})
-                  row_data = {
-                      "Page ID": row["id"],
-                      "URL": row.get("url"),
-                      "Created": row["created_time"],
-                      "Edited": row["last_edited_time"]
-                  }
-                  
-                  for prop_name, prop_content in props.items():
-                      p_type = prop_content.get("type")
-                      val_obj = prop_content.get(p_type)
-                      
-                      if p_type in ["title", "rich_text"]:
-                          parsed_val = "".join([t.get("plain_text", "") for t in val_obj]) if val_obj else ""
-                      elif p_type == "select" and val_obj:
-                          parsed_val = val_obj.get("name", "")
-                      elif p_type == "multi_select" and val_obj:
-                          parsed_val = ", ".join([v.get("name", "") for v in val_obj])
-                      elif p_type == "date" and val_obj:
-                          parsed_val = val_obj.get("start", "")
-                      elif p_type == "number" or p_type == "checkbox" or p_type == "url":
-                          parsed_val = val_obj
-                      else:
-                          parsed_val = "" 
-                      
-                      row_data[prop_name] = parsed_val
-                  data.append(row_data)
-
-              # 4. SAVE TO CSV
-              if data:
+              has_more, cursor = True, None
+              while has_more:
+                  res = notion.databases.query(database_id=db_id, start_cursor=cursor)
+                  all_rows.extend(res["results"])
+                  has_more, cursor = res["has_more"], res["next_cursor"]
+              
+              if all_rows:
+                  df = pd.DataFrame([extract_properties(r) for r in all_rows])
                   safe_title = "".join(c if c.isalnum() or c in " -" else "_" for c in title).strip()
-                  csv_path = output_dir / f"{safe_title}.csv"
-                  
-                  df = pd.DataFrame(data)
-                  df.to_csv(csv_path, index=False)
-                  print(f"  [SUCCESS] Saved: {csv_path.name}")
+                  df.to_csv(output_dir / f"{safe_title}.csv", index=False)
+                  print(f"  [SUCCESS] Saved {len(all_rows)} rows.")
+
+          print("--- Starting Deep Scan Backup ---")
+          search_results = notion.search().get("results", [])
+
+          for item in search_results:
+              item_id = item["id"]
+              item_obj = item.get("object")
+              
+              # Get Title
+              title = "Untitled"
+              if item_obj == "database":
+                  title = item["title"][0]["plain_text"] if item["title"] else "Database"
+                  backup_database(item_id, title)
+              else:
+                  # If it's a page or data_source, look for databases INSIDE it
+                  try:
+                      children = notion.blocks.children.list(block_id=item_id).get("results", [])
+                      for child in children:
+                          if child["type"] == "child_database":
+                              db_title = child["child_database"]["title"]
+                              backup_database(child["id"], db_title)
+                  except Exception:
+                      continue
 
           print("\n--- Backup script finished ---")
           EOF
